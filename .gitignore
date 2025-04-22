@@ -1,0 +1,12 @@
+# Xcode
+*.xcuserstate
+*.xcworkspace
+*.xcodeproj/project.xcworkspace/xcuserdata
+DerivedData/
+build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+
+# macOS
+.DS_Store
