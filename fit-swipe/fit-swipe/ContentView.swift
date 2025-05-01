@@ -1,81 +1,149 @@
 import SwiftUI
+import FirebaseFirestore
+import SDWebImageSwiftUI
+
+struct Outfit: Identifiable {
+    let id: String
+    let imageURL: String
+    let timestamp: Timestamp
+
+}
 
 struct ContentView: View {
+    @State private var outfits: [Outfit] = []
     @State private var reloadToggle = false
+    @State private var showUploadSheet = false
+    @State private var currentIndex = 0
+    @State private var loadingMore = false
+    @State private var dragOffset: CGSize = .zero
+
+
     var body: some View {
         ZStack {
-            // Main swipe content
-            if reloadToggle {
-                ContentViewBody()
+            if outfits.isEmpty {
+                Text("Loading outfits...")
             } else {
-                ContentViewBody()
-            }
-            // Bottom Navigation Bar
-            VStack {
-                Spacer()
-                HStack {
-                    // Left: Main Page Label
-                    VStack {
-                        Image(systemName: "house.fill")
-                            .font(.system(size: 40))
-                        Text("Main Page")
-                            .font(.footnote)
-                    }
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity)
-                    .onTapGesture {
-                        print("🔁 Refreshing main page")
-                        reloadToggle.toggle()  // Triggers rebuild
-                    }
-
-                    // Center: Floating +
-                    ZStack {
-                        Circle()
-                            .fill(Color.black)
-                            .frame(width: 80, height: 80)
-                            .shadow(radius: 8)
-
-                        Image(systemName: "plus")
-                            .foregroundColor(.white)
-                            .font(.system(size: 38, weight: .bold))
-                    }
-                    .offset(y: -20)
-                    .onTapGesture {
-                        // TODO: Add outfit logic
-                        print("➕ Add Outfit tapped")
-                    }
-
-                    // Right: My Account (to implement later)
-                    VStack {
-                        Image(systemName: "person.crop.circle")
-                            .font(.system(size: 40))
-                        Text("My Account")
-                            .font(.footnote)
-                    }
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity)
-                    .onTapGesture {
-                        print("👤 My Account tapped")
-                        // TODO: Navigate to account screen
+                ZStack {
+                    ForEach(Array(outfits.enumerated()), id: \.element.id) { index, outfit in
+                        OutfitCardView(
+                            outfitId: outfit.id,
+                            imageURL: outfit.imageURL,
+                            isTopCard: index == outfits.count - 1, // ✅ only top card can swipe
+                            onSwiped: { liked in
+                                handleSwipe(at: index, liked: liked)
+                            }
+                        )
                     }
                 }
-                .padding(.horizontal, 30)
-                .padding(.top, 10)
-                .background(
-                    Color.white
-                        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: -2)
-                )
+                .padding(.bottom, 80) // Leave room for bottom bar
             }
+            
+
+            // Bottom Navigation Bar
+            bottomBar
         }
         .edgesIgnoringSafeArea(.bottom)
+        .onAppear {
+            fetchOutfits()
+        }
+        .sheet(isPresented: $showUploadSheet) {
+            UploadOutfitView()
+        }
     }
-    private func ContentViewBody() -> some View {
-        OutfitCardView(
-            outfitImage: Image("outfit"), // Replace with dynamic image later
-            username: "user1"
-        )
-        .padding(.bottom, 80) // Room for nav bar
-        .transition(.opacity) // Smooth animation (optional)
-        .id(UUID()) // Force redraw if needed
+    
+    var bottomBar: some View {
+        VStack {
+            Spacer()
+            HStack {
+                VStack {
+                    Image(systemName: "house.fill")
+                    Text("Main Page")
+                        .font(.footnote)
+                }
+                .foregroundColor(.gray)
+                .frame(maxWidth: .infinity)
+                .onTapGesture {
+                    fetchOutfits()
+                }
+
+                ZStack {
+                    Circle()
+                        .fill(Color.black)
+                        .frame(width: 80, height: 80)
+                        .shadow(radius: 8)
+                    Image(systemName: "plus")
+                        .foregroundColor(.white)
+                        .font(.system(size: 38, weight: .bold))
+                }
+                .offset(y: -20)
+                .onTapGesture {
+                    showUploadSheet = true
+                }
+
+                VStack {
+                    Image(systemName: "person.crop.circle")
+                    Text("My Account")
+                        .font(.footnote)
+                }
+                .foregroundColor(.gray)
+                .frame(maxWidth: .infinity)
+                .onTapGesture {
+                    print("Go to Account page (future)")
+                }
+            }
+            .padding(.horizontal, 30)
+            .padding(.top, 10)
+            .background(Color.white.shadow(radius: 5))
+        }
+    }
+    
+    private func handleSwipe(at index: Int, liked: Bool) {
+        // Remove top card after swipe
+        if outfits.isEmpty { return }
+
+        outfits.removeLast()
+
+        // Load more outfits if getting low
+        if outfits.count <= 1 && !loadingMore {
+            loadMoreOutfits()
+        }
+    }
+    
+    func loadMoreOutfits() {
+        loadingMore = true
+
+        let lastTimestamp = outfits.last?.timestamp ?? Timestamp()
+
+        Firestore.firestore().collection("outfits")
+            .order(by: "timestamp", descending: true)
+            .start(after: [lastTimestamp])
+            .limit(to: 10)
+            .getDocuments { snapshot, error in
+                loadingMore = false
+                if let documents = snapshot?.documents {
+                    let newOutfits = documents.compactMap { doc -> Outfit? in
+                        guard let url = doc["imageURL"] as? String,
+                              let timestamp = doc["timestamp"] as? Timestamp else { return nil }
+                        return Outfit(id: doc.documentID, imageURL: url, timestamp: timestamp)
+                    }
+                    outfits += newOutfits
+                }
+            }
+    }
+
+    func fetchOutfits() {
+        Firestore.firestore().collection("outfits")
+            .order(by: "timestamp", descending: true)
+            .limit(to: 10)
+            .getDocuments { snapshot, error in
+                if let documents = snapshot?.documents {
+                    self.outfits = documents.compactMap { doc in
+                        guard let imageURL = doc["imageURL"] as? String,
+                              let timestamp = doc["timestamp"] as? Timestamp else { return nil }
+                        return Outfit(id: doc.documentID, imageURL: imageURL, timestamp: timestamp)
+                    }
+                }
+            }
     }
 }
+
